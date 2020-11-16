@@ -1,0 +1,146 @@
+# This script loops through all wav files and their corresponding textgrids in a directory and measures spectral moments for a defined set of annotated target
+# sounds. Please modify the target sounds to your needs. This script has been created by Kristin Predeck 11-16-2020. Individual script parts have been taken from
+# http://praatpfanne.lingphon.net/downloads/spectral_moments.txt and Mietta Lennes.
+
+form Get pitch formants intensity and duration from labeled segments in files
+	comment Directory of sound files. Be sure to include the final "/"
+	text sound_directory /Users/kristinpredeck/Documents/Canary/ENGL_TG/OR/
+	sentence Sound_file_extension .wav
+	comment Directory of TextGrid files. Be sure to include the final "/"
+	text textGrid_directory /Users/kristinpredeck/Documents/Canary/ENGL_TG/OR/
+	sentence TextGrid_file_extension .TextGrid
+	comment Full path of the resulting text file:
+	text resultsfile /Users/kristinpredeck/Desktop/resultsfric.txt
+	comment Which tier do you want to analyze?
+	integer Tier 1
+endform
+
+# Make a listing of all the sound files in a directory:
+Create Strings as file list... list 'sound_directory$'*'sound_file_extension$'
+numberOfFiles = Get number of strings
+
+# Assigning tier number
+annotation_tier = 1
+
+# specify target sounds; adapt to match your annotation
+fricatives$ = "F_I V_I S_I Z_I CH_I X_I"
+plosives$ = "P_I B_I T_I D_I K_I G_I"
+
+# Window length for fricatives (40ms) and plosives (20ms); adapt to your requirements
+windowF = 0.04
+windowP = 0.02
+
+# Check if the result file exists:
+if fileReadable (resultsfile$)
+	pause The file 'resultsfile$' already exists! Do you want to overwrite it?
+	filedelete 'resultsfile$'
+endif
+
+# Create a header row for the result file: (remember to edit this if you add or change the analyses!)
+header$ = "Filename	TextGridLabel	duration	word	grav	sdev	skew	kurt	'newline$'"
+fileappend "'resultsfile$'" 'header$'
+
+# Open each sound file in the directory:
+for ifile to numberOfFiles
+	filename$ = Get string... ifile
+	Read from file... 'sound_directory$''filename$'
+
+	# get the name of the sound object:
+	soundname$ = selected$ ("Sound", 1)
+
+	# Look for a TextGrid by the same name:
+	gridfile$ = "'textGrid_directory$''soundname$''textGrid_file_extension$'"
+
+	# if a TextGrid exists, open it and do the analysis:
+	if fileReadable (gridfile$)
+		Read from file... 'gridfile$'
+		select TextGrid 'soundname$'
+		numberOfIntervals = Get number of intervals... tier
+
+		# Pass through all intervals in the designated tier, and if they have a label, do the analysis:
+		for interval to numberOfIntervals
+			select TextGrid 'soundname$'
+			label$ = Get label of interval... tier interval
+			if label$ <> ""
+				# duration:
+				start = Get starting point... tier interval
+				end = Get end point... tier interval
+				duration = end-start
+				mid = (start + end) / 2
+
+				# get the matching interval (at the midpoint) in the annotation tier
+				annotation_interval = Get interval at time... annotation_tier mid
+				# get label of interval in the annotation tier
+				label_annotation$ = Get label of interval... annotation_tier annotation_interval
+				
+				# define analysis window (separate for fricatives and plosives)
+				# and call spectralMoments procedure
+				if index(fricatives$, label_annotation$)
+					# fricative onset
+					select Sound 'soundname$'
+					tx = start + windowF
+					call spectralMoments 'start' 'tx'
+					# fricative center
+					select Sound 'soundname$'
+					tx = mid - (windowF/2)
+					ty = mid + (windowF/2)
+					call spectralMoments 'tx' 'ty'
+					# fricative offset
+					select Sound 'soundname$'
+					tx = end - windowF
+					call spectralMoments 'tx' 'end'
+				elsif index(plosives$, label_annotation$)
+					# plosive onset
+					select Sound 'soundname$'
+					tx = start + windowP
+					call spectralMoments 'start' 'tx'
+					# plosive center
+					select Sound 'soundname$'
+					tx = mid - (windowP/2)
+					ty = mid + (windowP/2)
+					# plosive offset
+					call spectralMoments 'tx' 'ty'
+					select Sound 'soundname$'
+					tx = end - windowP
+					call spectralMoments 'tx' 'end'
+				
+
+				# Save result to text file:
+				resultline$ = "'soundname$'	'label$'	'duration'	'label_annotation$'		'grav' 'sdev'	'skew'	'kurt'	'newline$'"
+				fileappend "'resultsfile$'" 'resultline$'
+
+				# select the TextGrid so we can iterate to the next interval:
+				select TextGrid 'soundname$'
+			endif
+		endfor
+		# Remove the TextGrid objects
+		select TextGrid 'soundname$'
+		Remove
+	endif
+	# Remove the Sound object
+	select Sound 'soundname$'
+	Remove
+	# and go on with the next sound file!
+	select Strings list
+endfor
+
+# spectralMoments procedure
+procedure spectralMoments .onset .offset
+	# windowing
+	Extract part... '.onset' '.offset' Hamming 1 no
+	snd = selected ("Sound")
+	# preemphasis filter (Nissen, 2003)
+	Filter (pre-emphasis)... 100
+	sndPre = selected ("Sound")
+	# calculate spectrum
+	To Spectrum... yes
+	# extract spectral moments
+	grav = Get centre of gravity... 2
+	sdev = Get standard deviation... 2
+	skew = Get skewness... 2
+	kurt = Get kurtosis... 2
+	Remove
+endproc
+
+# When everything is done, remove the list of sound file paths:
+Remove
